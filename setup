@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+# gstack setup — build browser binary + install skills for Claude Code / Codex / CodeBuddy
+# All installations are physical copies (self-contained, no symlinks).
+set -e
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "Error: bun is required but not installed." >&2
+  echo "Install it: curl -fsSL https://bun.sh/install | bash" >&2
+  exit 1
+fi
+
+GSTACK_DIR="$(cd "$(dirname "$0")" && pwd)"
+BROWSE_BIN="$GSTACK_DIR/browse/dist/browse"
+
+# ─── Parse flags ──────────────────────────────────────────────
+HOST=""
+PROJECT=0         # 1 = install to project-local skills directory
+PROJECT_DIR=""    # target project directory (default: pwd)
+UNINSTALL=0       # 1 = remove previously installed gstack skills
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host) HOST="$2"; shift 2 ;;
+    --host=*) HOST="${1#--host=}"; shift ;;
+    --project)
+      PROJECT=1
+      # If next arg exists and doesn't start with --, treat it as the project path
+      if [ $# -ge 2 ] && [ "${2#--}" = "$2" ]; then
+        PROJECT_DIR="$2"; shift 2
+      else
+        shift
+      fi
+      ;;
+    --project=*) PROJECT=1; PROJECT_DIR="${1#--project=}"; shift ;;
+    --uninstall) UNINSTALL=1; shift ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+if [ -z "$HOST" ]; then
+  echo "Error: --host is required." >&2
+  echo "Usage: ./setup --host <claude|codex|codebuddy> [--project [path]] [--uninstall]" >&2
+  exit 1
+fi
+
+case "$HOST" in
+  claude|codex|codebuddy) ;;
+  *) echo "Unknown --host value: $HOST (expected claude, codex, or codebuddy)" >&2; exit 1 ;;
+esac
+
+# ─── Uninstall: remove gstack skills from target directory ────
+# Removes gstack/ and all skill directories (those containing SKILL.md).
+uninstall_gstack_skills() {
+  local skills_dir="$1"
+  local removed=()
+
+  if [ ! -d "$skills_dir" ]; then
+    echo "Nothing to uninstall: $skills_dir does not exist."
+    return 0
+  fi
+
+  # Remove gstack root (symlink or directory)
+  if [ -L "$skills_dir/gstack" ] || [ -d "$skills_dir/gstack" ]; then
+    rm -rf "$skills_dir/gstack"
+    removed+=("gstack")
+  fi
+
+  # Remove skill directories that contain SKILL.md (installed by gstack)
+  # Skip gstack/ (already handled above) and non-skill dirs
+  for entry in "$skills_dir"/*/; do
+    [ -e "$entry" ] || continue
+    local name
+    name="$(basename "$entry")"
+    [ "$name" = "gstack" ] && continue
+    # Only remove directories that have a SKILL.md (i.e., gstack-installed skills)
+    [ -f "$entry/SKILL.md" ] || continue
+    rm -rf "$entry"
+    removed+=("$name")
+  done
+
+  if [ ${#removed[@]} -gt 0 ]; then
+    echo "  removed: ${removed[*]}"
+  else
+    echo "  nothing to remove in $skills_dir"
+  fi
+}
+
+if [ "$UNINSTALL" -eq 1 ]; then
+  echo "Uninstalling gstack skills..."
+  if [ "$PROJECT" -eq 1 ]; then
+    # Project-local uninstall
+    local_project_root="${PROJECT_DIR:-$(pwd)}"
+    local_project_root="$(cd "$local_project_root" 2>/dev/null && pwd)" || local_project_root="$PROJECT_DIR"
+    if [ "$HOST" = "claude" ]; then
+      echo "  claude (project-local): $local_project_root/.claude/skills"
+      uninstall_gstack_skills "$local_project_root/.claude/skills"
+    elif [ "$HOST" = "codex" ]; then
+      echo "  codex (project-local): $local_project_root/.agents/skills"
+      uninstall_gstack_skills "$local_project_root/.agents/skills"
+    elif [ "$HOST" = "codebuddy" ]; then
+      echo "  codebuddy (project-local): $local_project_root/.codebuddy/skills"
+      uninstall_gstack_skills "$local_project_root/.codebuddy/skills"
+    fi
+  else
+    # Global uninstall
+    if [ "$HOST" = "claude" ]; then
+      echo "  claude: $HOME/.claude/skills"
+      uninstall_gstack_skills "$HOME/.claude/skills"
+    elif [ "$HOST" = "codex" ]; then
+      echo "  codex: $HOME/.codex/skills"
+      uninstall_gstack_skills "$HOME/.codex/skills"
+    elif [ "$HOST" = "codebuddy" ]; then
+      echo "  codebuddy: $HOME/.codebuddy/skills"
+      uninstall_gstack_skills "$HOME/.codebuddy/skills"
+    fi
+  fi
+  echo "gstack uninstalled."
+  exit 0
+fi
+
+# Set install flags based on host
+INSTALL_CLAUDE=0
+INSTALL_CODEX=0
+INSTALL_CODEBUDDY=0
+if [ "$HOST" = "claude" ]; then
+  INSTALL_CLAUDE=1
+elif [ "$HOST" = "codex" ]; then
+  INSTALL_CODEX=1
+elif [ "$HOST" = "codebuddy" ]; then
+  INSTALL_CODEBUDDY=1
+fi
+
+ensure_playwright_browser() {
+  (
+    cd "$GSTACK_DIR"
+    bun --eval 'import { chromium } from "playwright"; const browser = await chromium.launch(); await browser.close();'
+  ) >/dev/null 2>&1
+}
+
+# 1. Build browse binary + dist/ if needed (smart rebuild: stale sources, package.json, lock)
+NEEDS_BUILD=0
+if [ ! -x "$BROWSE_BIN" ]; then
+  NEEDS_BUILD=1
+elif [ ! -d "$GSTACK_DIR/dist/claude" ] || [ ! -d "$GSTACK_DIR/dist/codebuddy" ] || [ ! -d "$GSTACK_DIR/dist/codex" ]; then
+  NEEDS_BUILD=1
+elif [ -n "$(find "$GSTACK_DIR/browse/src" -type f -newer "$BROWSE_BIN" -print -quit 2>/dev/null)" ]; then
+  NEEDS_BUILD=1
+elif [ "$GSTACK_DIR/package.json" -nt "$BROWSE_BIN" ]; then
+  NEEDS_BUILD=1
+elif [ -f "$GSTACK_DIR/bun.lock" ] && [ "$GSTACK_DIR/bun.lock" -nt "$BROWSE_BIN" ]; then
+  NEEDS_BUILD=1
+fi
+
+if [ "$NEEDS_BUILD" -eq 1 ]; then
+  echo "Building browse binary..."
+  (
+    cd "$GSTACK_DIR"
+    bun install
+    bun run build
+  )
+  # Safety net: write .version if build script didn't (e.g., git not available during build)
+  if [ ! -f "$GSTACK_DIR/browse/dist/.version" ]; then
+    git -C "$GSTACK_DIR" rev-parse HEAD > "$GSTACK_DIR/browse/dist/.version" 2>/dev/null || true
+  fi
+fi
+
+if [ ! -x "$BROWSE_BIN" ]; then
+  echo "gstack setup failed: browse binary missing at $BROWSE_BIN" >&2
+  exit 1
+fi
+
+# 2. Ensure Playwright's Chromium is available
+if ! ensure_playwright_browser; then
+  echo "Installing Playwright Chromium..."
+  (
+    cd "$GSTACK_DIR"
+    bunx playwright install chromium
+  )
+fi
+
+if ! ensure_playwright_browser; then
+  echo "gstack setup failed: Playwright Chromium could not be launched" >&2
+  exit 1
+fi
+
+# 3. Ensure state directory exists (follows installation mode)
+if [ "$PROJECT" -eq 1 ]; then
+  # Project install: state dir is <project>/.gstack/
+  _PROJ_ROOT="${PROJECT_DIR:-$(pwd)}"
+  _PROJ_ROOT="$(cd "$_PROJ_ROOT" 2>/dev/null && pwd)" || _PROJ_ROOT="$PROJECT_DIR"
+  mkdir -p "$_PROJ_ROOT/.gstack/projects"
+  # Ensure .gstack/ is in .gitignore
+  if [ -f "$_PROJ_ROOT/.gitignore" ]; then
+    if ! grep -q '^\.gstack' "$_PROJ_ROOT/.gitignore" 2>/dev/null; then
+      echo '.gstack/' >> "$_PROJ_ROOT/.gitignore"
+    fi
+  else
+    echo '.gstack/' > "$_PROJ_ROOT/.gitignore"
+  fi
+else
+  # Global install: state dir is ~/.gstack/
+  mkdir -p "$HOME/.gstack/projects"
+fi
+
+# ─── Helper: resolve project root from --project flag ──────────
+resolve_project_root() {
+  if [ -n "$PROJECT_DIR" ]; then
+    PROJECT_ROOT="$PROJECT_DIR"
+  else
+    PROJECT_ROOT="$(pwd)"
+  fi
+  PROJECT_ROOT="$(cd "$PROJECT_ROOT" 2>/dev/null && pwd)" || {
+    echo "Error: project directory does not exist: $PROJECT_DIR" >&2
+    exit 1
+  }
+}
+
+# ─── Helper: physical copy install (self-contained) ───────────
+# Copies dist/{host}/ contents into a target skills directory.
+# After installation, the target is fully self-contained — no symlinks,
+# no dependency on the source repository.
+install_copy() {
+  local host="$1"       # claude, codex, or codebuddy
+  local skills_dir="$2" # e.g. ~/.codebuddy/skills or ./.codebuddy/skills
+  local dist_src="$GSTACK_DIR/dist/$host"
+
+  # Validate dist/ is a self-contained build
+  if [ ! -d "$dist_src/bin" ]; then
+    echo "Error: dist/$host/ is not a self-contained build." >&2
+    echo "Run 'bun run build' first." >&2
+    return 1
+  fi
+
+  local gstack_root="$skills_dir/gstack"
+
+  # --- Shared runtime resources ---
+  # bin/ scripts
+  rm -rf "$gstack_root/bin"
+  mkdir -p "$gstack_root/bin"
+  cp -R "$dist_src/bin/"* "$gstack_root/bin/"
+  chmod +x "$gstack_root/bin/"*
+
+  # VERSION
+  [ -f "$dist_src/VERSION" ] && cp "$dist_src/VERSION" "$gstack_root/VERSION"
+
+  # --- Root skill (gstack/SKILL.md) ---
+  if [ -f "$dist_src/gstack/SKILL.md" ]; then
+    cp "$dist_src/gstack/SKILL.md" "$gstack_root/SKILL.md"
+  fi
+
+  # --- Individual skill directories ---
+  local installed=()
+  for skill_dir in "$dist_src"/*/; do
+    [ -d "$skill_dir" ] || continue
+    local skill_name
+    skill_name="$(basename "$skill_dir")"
+    # Skip non-skill dirs and gstack root (handled above)
+    [ "$skill_name" = "gstack" ] || [ "$skill_name" = "bin" ] && continue
+    [ -f "$skill_dir/SKILL.md" ] || continue
+    local target="$skills_dir/$skill_name"
+    rm -rf "$target"
+    cp -R "$skill_dir" "$target"
+    installed+=("$skill_name")
+  done
+
+  if [ ${#installed[@]} -gt 0 ]; then
+    echo "  installed skills: ${installed[*]}"
+  fi
+}
+# 4. Install for Claude
+if [ "$INSTALL_CLAUDE" -eq 1 ]; then
+  if [ "$PROJECT" -eq 1 ]; then
+    # Project-local install: <project>/.claude/skills/
+    resolve_project_root
+    CLAUDE_SKILLS="$PROJECT_ROOT/.claude/skills"
+  else
+    # Global install: ~/.claude/skills/
+    CLAUDE_SKILLS="$HOME/.claude/skills"
+  fi
+  mkdir -p "$CLAUDE_SKILLS/gstack"
+  install_copy "claude" "$CLAUDE_SKILLS"
+
+  if [ "$PROJECT" -eq 1 ]; then
+    echo "gstack installed (claude, project-local)."
+    echo "  target: $CLAUDE_SKILLS"
+  else
+    echo "gstack installed (claude)."
+    echo "  target: $CLAUDE_SKILLS"
+  fi
+fi
+
+# 5. Install for Codex
+if [ "$INSTALL_CODEX" -eq 1 ]; then
+  if [ "$PROJECT" -eq 1 ]; then
+    # Project-local install: <project>/.agents/skills/
+    resolve_project_root
+    CODEX_SKILLS="$PROJECT_ROOT/.agents/skills"
+    mkdir -p "$CODEX_SKILLS/gstack"
+    install_copy "codex" "$CODEX_SKILLS"
+    echo "gstack installed (codex, project-local)."
+    echo "  target: $CODEX_SKILLS"
+  else
+    # Global install: ~/.codex/skills/
+    CODEX_SKILLS="$HOME/.codex/skills"
+    mkdir -p "$CODEX_SKILLS/gstack"
+    install_copy "codex" "$CODEX_SKILLS"
+
+    echo "gstack installed (codex)."
+    echo "  target: $CODEX_SKILLS"
+  fi
+fi
+
+# 6. Install for CodeBuddy
+if [ "$INSTALL_CODEBUDDY" -eq 1 ]; then
+  if [ "$PROJECT" -eq 1 ]; then
+    # Project-local install: <project>/.codebuddy/skills/
+    resolve_project_root
+    CODEBUDDY_SKILLS="$PROJECT_ROOT/.codebuddy/skills"
+  else
+    # Global install: ~/.codebuddy/skills/
+    CODEBUDDY_SKILLS="$HOME/.codebuddy/skills"
+  fi
+  mkdir -p "$CODEBUDDY_SKILLS/gstack"
+  install_copy "codebuddy" "$CODEBUDDY_SKILLS"
+
+  if [ "$PROJECT" -eq 1 ]; then
+    echo "gstack installed (codebuddy, project-local)."
+    echo "  target: $CODEBUDDY_SKILLS"
+  else
+    echo "gstack installed (codebuddy)."
+    echo "  target: $CODEBUDDY_SKILLS"
+  fi
+fi
+
+# 7. Legacy cleanup
+rm -f /tmp/gstack-latest-version

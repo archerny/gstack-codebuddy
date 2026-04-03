@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# gstack-review-log — atomically log a review result
+# Usage: gstack-review-log '{"skill":"...","timestamp":"...","status":"..."}'
+#
+# State directory follows installation mode:
+#   Project install (--project) → <project>/.gstack/projects/<branch>-reviews.jsonl
+#   Global install              → ~/.gstack/projects/<slug>/<branch>-reviews.jsonl
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+STATE_DIR="${GSTACK_STATE_DIR:-}"
+if [ -z "$STATE_DIR" ]; then
+  _PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [ -n "$_PROJECT_ROOT" ]; then
+    _IS_LOCAL=0
+    for _d in .claude/skills/gstack .codebuddy/skills/gstack .agents/skills/gstack; do
+      [ -d "$_PROJECT_ROOT/$_d/bin" ] && _IS_LOCAL=1 && break
+    done
+    if [ "$_IS_LOCAL" -eq 1 ]; then
+      STATE_DIR="$_PROJECT_ROOT/.gstack"
+    else
+      STATE_DIR="$HOME/.gstack"
+    fi
+  else
+    STATE_DIR="$HOME/.gstack"
+  fi
+fi
+
+# Determine review log path based on install mode
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+if [ "$STATE_DIR" != "$HOME/.gstack" ]; then
+  # Project install: flat structure, no slug needed
+  mkdir -p "$STATE_DIR/projects"
+  echo "$1" >> "$STATE_DIR/projects/$BRANCH-reviews.jsonl"
+else
+  # Global install: keep slug-based structure
+  eval $("$SCRIPT_DIR/gstack-slug" 2>/dev/null)
+  mkdir -p "$STATE_DIR/projects/$SLUG"
+  echo "$1" >> "$STATE_DIR/projects/$SLUG/$BRANCH-reviews.jsonl"
+fi

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# gstack-config — read/write config.yaml
+#
+# Usage:
+#   gstack-config get <key>          — read a config value
+#   gstack-config set <key> <value>  — write a config value
+#   gstack-config list               — show all config
+#
+# State directory follows installation mode:
+#   Project install (--project) → <project>/.gstack/
+#   Global install              → ~/.gstack/
+#
+# Env overrides (for testing):
+#   GSTACK_STATE_DIR  — override state directory
+set -euo pipefail
+
+STATE_DIR="${GSTACK_STATE_DIR:-}"
+if [ -z "$STATE_DIR" ]; then
+  _PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [ -n "$_PROJECT_ROOT" ]; then
+    _IS_LOCAL=0
+    for _d in .claude/skills/gstack .codebuddy/skills/gstack .agents/skills/gstack; do
+      [ -d "$_PROJECT_ROOT/$_d/bin" ] && _IS_LOCAL=1 && break
+    done
+    if [ "$_IS_LOCAL" -eq 1 ]; then
+      STATE_DIR="$_PROJECT_ROOT/.gstack"
+    else
+      STATE_DIR="$HOME/.gstack"
+    fi
+  else
+    STATE_DIR="$HOME/.gstack"
+  fi
+fi
+CONFIG_FILE="$STATE_DIR/config.yaml"
+
+case "${1:-}" in
+  get)
+    KEY="${2:?Usage: gstack-config get <key>}"
+    grep -E "^${KEY}:" "$CONFIG_FILE" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '[:space:]' || true
+    ;;
+  set)
+    KEY="${2:?Usage: gstack-config set <key> <value>}"
+    VALUE="${3:?Usage: gstack-config set <key> <value>}"
+    mkdir -p "$STATE_DIR"
+    if grep -qE "^${KEY}:" "$CONFIG_FILE" 2>/dev/null; then
+      sed -i '' "s/^${KEY}:.*/${KEY}: ${VALUE}/" "$CONFIG_FILE"
+    else
+      echo "${KEY}: ${VALUE}" >> "$CONFIG_FILE"
+    fi
+    ;;
+  list)
+    cat "$CONFIG_FILE" 2>/dev/null || true
+    ;;
+  *)
+    echo "Usage: gstack-config {get|set|list} [key] [value]"
+    exit 1
+    ;;
+esac

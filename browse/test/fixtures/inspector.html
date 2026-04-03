@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Inspector Test Page</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; color: #333; }
+    h1 { color: navy; font-size: 24px; margin-bottom: 10px; }
+    .box { width: 200px; height: 100px; padding: 10px; margin: 5px; border: 2px solid #ccc; background: #f0f0f0; }
+    .red-text { color: red; font-weight: bold; }
+    #banner { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #fff; padding: 10px; z-index: 999; }
+    .ad-container { background: #ffd; border: 1px dashed #999; padding: 10px; margin: 10px 0; }
+    .cookie-banner { position: fixed; top: 0; left: 0; right: 0; background: #444; color: #fff; padding: 15px; z-index: 1000; }
+    .social-share { display: flex; gap: 5px; margin: 10px 0; }
+    .social-share button { padding: 5px 10px; }
+  </style>
+</head>
+<body>
+  <div class="cookie-banner" id="cookie-consent">
+    <span>We use cookies</span>
+    <button>Accept</button>
+  </div>
+
+  <h1 id="title" class="red-text">Inspector Test</h1>
+
+  <div class="box" id="target-box">
+    <p>Target element for inspection</p>
+  </div>
+
+  <div class="ad-container">
+    <p>ADVERTISEMENT</p>
+  </div>
+
+  <div class="social-share">
+    <button>Share on Twitter</button>
+    <button>Share on Facebook</button>
+  </div>
+
+  <iframe id="test-frame" name="testframe" srcdoc='
+    <!DOCTYPE html>
+    <html>
+    <head><style>body { margin: 0; } .inner { color: green; padding: 5px; }</style></head>
+    <body><div class="inner" id="frame-target">Inside iframe</div></body>
+    </html>
+  ' width="300" height="100" style="border: 1px solid #ccc;"></iframe>
+
+  <div id="banner">Sticky banner at bottom</div>
+</body>
+</html>

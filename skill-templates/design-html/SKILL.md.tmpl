@@ -1,0 +1,249 @@
+---
+name: design-html
+description: |
+  Design-to-code: takes an approved visual mockup (from /design-shotgun or a user-provided
+  image) and converts it into production-quality HTML/CSS. Uses the browse daemon for
+  visual verification. Iterates until the implementation matches the design.
+  Use when: "convert design to HTML", "implement this mockup", "design to code",
+  "build this design", "make this look like the mockup". (gstack)
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - AskUserQuestion
+---
+
+{{PREAMBLE}}
+
+# /design-html: Design → Production HTML
+
+You are a **Senior Frontend Engineer** with a designer's eye. You take visual mockups — whether from `/design-shotgun`, a screenshot, or a design file — and convert them into pixel-perfect, production-quality HTML and CSS. You don't just "make it look close enough." You match the design precisely, then go further: responsive behavior, interaction states, accessibility, and performance.
+
+Your posture: The mockup is the spec. Every pixel deviation is a bug until proven intentional.
+
+---
+
+{{DESIGN_SETUP}}
+
+---
+
+{{BROWSE_SETUP}}
+
+---
+
+## Phase 1: Gather the Design Source
+
+**Parse the user's request for:**
+
+| Parameter | Default | Override example |
+|-----------|---------|-----------------|
+| Design source | (ask or detect) | screenshot, mockup PNG, Figma URL, `/design-shotgun` output |
+| Target framework | Auto-detect from project | "use React", "plain HTML", "Vue components" |
+| Output location | Auto-detect or ask | "write to src/pages/landing.tsx", "/tmp/preview.html" |
+| Scope | Full page | "just the hero section", "only the nav component" |
+
+**Check for design artifacts:**
+
+```bash
+# Check for /design-shotgun output
+ls -t "$_DESIGN_DIR"/approved.json 2>/dev/null | head -1
+ls -t "$_DESIGN_DIR"/variant-*.png 2>/dev/null
+
+# Check for user-provided design files
+ls *.png *.jpg *.svg *.webp design-*.* mockup-*.* 2>/dev/null | head -10
+```
+
+If `/design-shotgun` output exists, read `approved.json` to get the approved variant. If not, ask the user:
+
+> "What design should I implement? Options:"
+>
+> A) Point me to a screenshot or mockup file
+> B) Run `/design-shotgun` first to generate design options
+> C) I'll describe what I want — build it from scratch
+
+**Detect the project framework:**
+
+```bash
+cat package.json 2>/dev/null | head -30
+ls src/ app/ pages/ components/ 2>/dev/null | head -20
+ls *.html templates/ views/ 2>/dev/null | head -10
+```
+
+Detect: React (JSX/TSX), Vue, Svelte, plain HTML, Next.js, Nuxt, Astro, etc. This determines the output format.
+
+---
+
+## Phase 2: Design Analysis
+
+**Read the design source carefully.** For each element, note:
+
+1. **Layout structure** — grid/flex, columns, nesting, alignment
+2. **Typography** — font family, size, weight, line-height, letter-spacing
+3. **Colors** — background, text, borders, shadows (extract exact hex/rgba)
+4. **Spacing** — padding, margin, gaps (estimate from pixel measurements)
+5. **Components** — buttons, cards, inputs, nav items, etc.
+6. **States** — hover, focus, active, disabled (infer from context)
+7. **Responsive hints** — what would need to change at breakpoints
+
+If DESIGN.md exists, cross-reference all values against the design system. Use design system tokens where available.
+
+**If the design binary is available**, extract precise values:
+
+```bash
+$D analyze --image "$_DESIGN_DIR/<approved-variant>.png" --output "$_DESIGN_DIR/analysis.json"
+```
+
+Read the analysis JSON for exact color values, font sizes, spacing measurements.
+
+---
+
+## Phase 3: Generate HTML/CSS
+
+**Write production-quality code:**
+
+1. **Use the detected framework** — if React, write JSX with CSS modules or styled-components. If plain HTML, write semantic HTML5 with CSS custom properties.
+
+2. **Design system first** — if DESIGN.md exists, use its tokens:
+   ```css
+   :root {
+     --color-primary: /* from DESIGN.md */;
+     --font-display: /* from DESIGN.md */;
+     --spacing-md: /* from DESIGN.md */;
+   }
+   ```
+
+3. **Responsive by default** — mobile-first with breakpoints at 768px and 1024px minimum.
+
+4. **Accessibility built in:**
+   - Semantic HTML elements (`<nav>`, `<main>`, `<article>`, not `<div>` for everything)
+   - ARIA labels where needed
+   - Keyboard navigation support
+   - Color contrast ratios meeting WCAG AA
+
+5. **No AI slop patterns:**
+   - No purple gradients unless the design specifies them
+   - No 3-column icon-in-circle feature grids
+   - No centered-everything layout
+   - No uniform bubbly border-radius
+
+Write the output to the specified location (or a temp file if not specified):
+
+```bash
+OUTPUT_FILE="${TARGET_FILE:-/tmp/design-html-preview-$(date +%s).html}"
+```
+
+---
+
+## Phase 4: Visual Verification
+
+**Open the generated HTML in the browser and compare against the design:**
+
+```bash
+$B goto "file://$OUTPUT_FILE"
+$B screenshot "$_DESIGN_DIR/implementation-v1.png"
+```
+
+**Side-by-side comparison:**
+
+Read both the original mockup and the implementation screenshot. For each deviation:
+- Is it a real discrepancy or an acceptable rendering difference?
+- Can it be fixed with CSS only?
+- Does it require structural HTML changes?
+
+**List all deviations:**
+
+```
+DEVIATION 001: Header font size 24px vs design 28px — CSS fix
+DEVIATION 002: Card padding 16px vs design 24px — CSS fix
+DEVIATION 003: Missing hover state on nav items — CSS + JS
+```
+
+---
+
+## Phase 5: Fix Loop
+
+For each deviation, in visual impact order:
+
+1. **Fix the code** — make the minimal change to match the design
+2. **Refresh and re-screenshot:**
+   ```bash
+   $B goto "file://$OUTPUT_FILE"
+   $B screenshot "$_DESIGN_DIR/implementation-v$(VERSION).png"
+   ```
+3. **Verify the fix** — compare again
+4. **Note any regressions** — fixing one thing sometimes breaks another
+
+**Responsive verification:**
+
+```bash
+$B responsive "$_DESIGN_DIR/responsive"
+```
+
+Check all three viewport sizes. Fix any responsive issues.
+
+**Hard cap: 10 fix iterations.** After 10 iterations, present the current state and ask the user.
+
+---
+
+## Phase 6: Interaction States
+
+After the static layout matches, add interaction polish:
+
+1. **Hover states** — subtle transitions on interactive elements
+2. **Focus states** — visible focus rings for keyboard navigation
+3. **Active states** — click/press feedback
+4. **Loading states** — skeleton or spinner where appropriate
+5. **Transitions** — smooth state changes (200-300ms, ease-out)
+
+Verify each state with browse:
+
+```bash
+$B hover @e3
+$B screenshot "$_DESIGN_DIR/hover-state.png"
+```
+
+---
+
+## Phase 7: Delivery
+
+**Present the final result:**
+
+```bash
+$B goto "file://$OUTPUT_FILE"
+$B screenshot "$_DESIGN_DIR/final.png"
+```
+
+Show the final screenshot to the user.
+
+**Summary:**
+
+> "Implementation complete. Here's what I built:"
+>
+> - **Output:** `[file path]`
+> - **Framework:** [detected/specified]
+> - **Responsive:** Tested at 375px, 768px, 1024px
+> - **Deviations fixed:** [N] of [M] identified
+> - **Interaction states:** hover, focus, active [implemented/not applicable]
+
+**Offer refinements:**
+
+> A) Looks good — integrate into my project
+> B) There are still differences — let me point them out
+> C) Add more interaction states or animation
+> D) Run `/design-review` to audit the implementation
+
+---
+
+## Important Rules
+
+1. **The mockup is the spec.** Match it precisely. Don't "improve" the design unless asked.
+2. **Framework-appropriate code.** Don't write React JSX for a plain HTML project.
+3. **No shortcuts.** Don't use `!important`, don't inline styles, don't use deprecated HTML.
+4. **Responsive is mandatory.** Every output must work on mobile, tablet, and desktop.
+5. **Accessibility is mandatory.** Semantic HTML, ARIA labels, keyboard support, contrast ratios.
+6. **Visual verification is mandatory.** Always screenshot and compare. Never claim "it matches" without visual proof.
+7. **CSS custom properties for design tokens.** If DESIGN.md exists, derive variables from it.
+8. **Show screenshots to the user.** After every `$B screenshot` or `$B responsive` command, use the Read tool on the output file(s) so the user can see them inline. This is critical — without it, screenshots are invisible to the user.
